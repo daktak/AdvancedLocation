@@ -772,7 +772,7 @@ public class AdvancedLocation {
                 values);
     };
 
-    public String getTCX(final String sportType) {
+    public String getTCX(final String sportType, final String tcxCreator, final String tcxBuild) {
         StringBuilder tcx = new StringBuilder();
         tcx.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
             + "<TrainingCenterDatabase xsi:schemaLocation=\"http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd\" "
@@ -823,7 +823,31 @@ public class AdvancedLocation {
                 tcx.append("      </ns3:TPX>\n    </Extensions>\n");
                 tcx.append("  </Trackpoint>\n");
             } while (cursor.moveToNext());
-            tcx.append("</Track>\n</Lap>\n</Activity>\n</Activities>\n");
+            tcx.append("</Track>\n</Lap>\n");
+            tcx.append("<Creator xsi:type=\"Device_t\">\n");
+            tcx.append("  <Name>"+tcxCreator+"</Name>\n");
+            String[] cVers = tcxBuild.split("\\.");
+            tcx.append("    <Version>\n");
+            tcx.append("      <VersionMajor>"+cVers[0].replaceAll("[^0-9]","")+"</VersionMajor>\n");
+            tcx.append("      <VersionMinor>"+cVers[1]+"</VersionMinor>\n");
+            tcx.append("      <BuildMajor>"+cVers[2]+"</BuildMajor>\n");
+            tcx.append("      <BuildMinor>0</BuildMinor>\n");
+            tcx.append("    </Version>\n");
+            tcx.append("</Creator>\n");
+            tcx.append("</Activity>\n");
+            tcx.append("<Author xsi:type=\"Application_t\">\n");
+            tcx.append("  <Name>JayPS</Name>\n");
+            tcx.append("  <LangID>"+Locale.getDefault().getLanguage()+"</LangID>\n");
+            String version = BuildConfig.VERSION_NAME;
+            String[] vers = version.split("\\.");
+            tcx.append("  <Build>\n    <Version>\n");
+            tcx.append("      <VersionMajor>"+vers[0]+"</VersionMajor>\n");
+            tcx.append("      <VersionMinor>"+vers[1]+"</VersionMinor>\n");
+            tcx.append("      <BuildMajor>0</BuildMajor>\n");
+            tcx.append("      <BuildMinor>0</BuildMinor>\n");
+            tcx.append("  </Version>\n    </Build>\n");
+            tcx.append("</Author>\n");
+            tcx.append("</Activities>\n");
         }
 
         tcx.append("</TrainingCenterDatabase>");
