@@ -1020,7 +1020,10 @@ public class AdvancedLocation {
         Date date = new Date();
         long timeMilli = date.getTime() - (seconds * 1000);
         String time = String.format("%d",timeMilli);
-        String selectQuery = "SELECT loca_power from "+AdvancedLocationDbHelper.Location.TABLE_NAME+" WHERE loca_time >= "+time;
+        String selectQuery = "SELECT loca_power from "+AdvancedLocationDbHelper.Location.TABLE_NAME;
+        if (seconds > 0) {
+            selectQuery += " WHERE loca_time >= "+time;
+        }
         Cursor cursor = db.rawQuery(selectQuery, null);
         int count = 0;
         int sum = 0;
