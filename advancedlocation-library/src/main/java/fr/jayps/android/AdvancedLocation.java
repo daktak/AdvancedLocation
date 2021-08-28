@@ -1031,7 +1031,10 @@ public class AdvancedLocation {
         if (cursor.moveToFirst()) {
             do {
                 count++;
-                sum += Integer.parseInt(cursor.getString(0));
+                try {
+                    sum += Integer.parseInt(cursor.getString(0));
+                } catch (NumberFormatException e) {
+                }
             } while (cursor.moveToNext());
             avg = sum / count;
         }
@@ -1051,7 +1054,10 @@ public class AdvancedLocation {
         if (cursor.moveToFirst()) {
             do {
                 count++;
-                sum += Math.pow(Integer.parseInt(cursor.getString(0)),4);
+                try {
+                    sum += Math.pow(Integer.parseInt(cursor.getString(0)),4);
+                } catch (NumberFormatException e) {
+                }
             } while (cursor.moveToNext());
             avg = sum / count;
         }
