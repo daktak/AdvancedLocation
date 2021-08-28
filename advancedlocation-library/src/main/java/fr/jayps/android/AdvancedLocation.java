@@ -1038,7 +1038,7 @@ public class AdvancedLocation {
             } while (cursor.moveToNext());
             avg = sum / count;
         }
-        Logger(String.format("avgdPower time $%d count %d",seconds, count));
+        //Logger(String.format("avgdPower time $%d count %d",seconds, count));
         return (int) Math.round(avg);
     }
 
@@ -1062,7 +1062,7 @@ public class AdvancedLocation {
             avg = sum / count;
         }
         double np = Math.pow(avg, 1.0/4);
-        Logger(String.format("NormalizedPower time $%d count %d",seconds, count));
+        //Logger(String.format("NormalizedPower time $%d count %d",seconds, count));
         return (int) Math.round(avg);
     }
 }
