@@ -1063,6 +1063,6 @@ public class AdvancedLocation {
         }
         double np = Math.pow(avg, 1.0/4);
         //Logger(String.format("NormalizedPower time $%d count %d",seconds, count));
-        return (int) Math.round(avg);
+        return (int) Math.round(np);
     }
 }
