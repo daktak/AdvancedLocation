@@ -1102,15 +1102,6 @@ public class AdvancedLocation {
         return has;
     }
 
-    public boolean hasPowerData() {
-        String q = "SELECT COUNT(*) FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME
-                + " WHERE loca_power IS NOT NULL AND loca_power > 0";
-        Cursor c = db.rawQuery(q, null);
-        boolean has = c.moveToFirst() && c.getInt(0) > 0;
-        c.close();
-        return has;
-    }
-
     public int getAvgPower(int seconds) {
         Date date = new Date();
         long timeMilli = date.getTime() - (seconds * 1000);
