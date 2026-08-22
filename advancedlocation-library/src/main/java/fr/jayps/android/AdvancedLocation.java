@@ -134,6 +134,9 @@ public class AdvancedLocation {
     private int _power = 0;
     private int _maxPower = 0;
 
+    private boolean _indoor = false;
+    private long _lastIndoorTick = -1;
+
     // debug levels
     public int debugLevel = 0;
     public int debugLevelToast = 0;
@@ -148,6 +151,7 @@ public class AdvancedLocation {
     private AdvancedLocationDbHelper dbHelper;
     private SQLiteDatabase db;
     private boolean _saveLocation = false;
+    private boolean _saveOnLocationChange = true;
 
     public AdvancedLocation() {
         this._context = null;
@@ -395,6 +399,21 @@ public class AdvancedLocation {
         this._saveLocation = saveLocation;
     }
 
+    public void setSaveOnLocationChange(boolean saveOnLocationChange) {
+        this._saveOnLocationChange = saveOnLocationChange;
+    }
+
+    public void setIndoor(boolean indoor) {
+        this._indoor = indoor;
+        if (!_indoor) {
+            _lastIndoorTick = -1;
+        }
+    }
+
+    public boolean isIndoor() {
+        return _indoor;
+    }
+
     public int onLocationChanged(Location location, int heartRate, int cadence, int power) {
         int returnValue = NORMAL;
         long deltaTime = 0;
@@ -631,8 +650,8 @@ public class AdvancedLocation {
                     Logger("Location OK to be saved", 2);
                     returnValue = SAVED;
                     lastSavedLocation = currentLocation;
-                    if (_saveLocation) {
-                        _saveLocation();
+                    if (_saveLocation && _saveOnLocationChange) {
+                        _saveLocation(this.getTime());
                     }
                 }
 
@@ -745,16 +764,26 @@ public class AdvancedLocation {
         return false;
     }
 
-    private void _saveLocation() {
+    private void _saveLocation(long timeMs) {
         ContentValues values = new ContentValues();
-        values.put("loca_time", this.getTime());
-        values.put("loca_lat", this.getLatitude());
-        values.put("loca_lon", this.getLongitude());
-        values.put("loca_altitude", this.getAltitude());
-        values.put("loca_gps_altitude", this.getAltitudeFromGps());
-        values.put("loca_pressure_altitude", this.getAltitudeFromPressure());
-        values.put("loca_ascent", this.getAscent());
-        values.put("loca_accuracy", this.getAccuracy());
+        values.put("loca_time", timeMs);
+        if (_indoor) {
+            values.putNull("loca_lat");
+            values.putNull("loca_lon");
+            values.putNull("loca_altitude");
+            values.putNull("loca_gps_altitude");
+            values.putNull("loca_pressure_altitude");
+            values.putNull("loca_accuracy");
+            values.put("loca_ascent", this.getAscent());
+        } else {
+            values.put("loca_lat", this.getLatitude());
+            values.put("loca_lon", this.getLongitude());
+            values.put("loca_altitude", this.getAltitude());
+            values.put("loca_gps_altitude", this.getAltitudeFromGps());
+            values.put("loca_pressure_altitude", this.getAltitudeFromPressure());
+            values.put("loca_ascent", this.getAscent());
+            values.put("loca_accuracy", this.getAccuracy());
+        }
         if (_hearRate > 0) {
             values.put("loca_hr", _hearRate);
         }
@@ -773,6 +802,50 @@ public class AdvancedLocation {
                 null,
                 values);
     };
+
+    /**
+     * Save the current location to the database using the supplied timestamp.
+     * Used by an external timer to record a trackpoint at a fixed interval
+     * even when no GPS fix is delivered (e.g. when stationary). Bypasses the
+     * accuracy gate and uses the last known position.
+     */
+    /**
+     * Advance the indoor (no-GPS) state by one timer tick.
+     * Total time is accumulated even while stationary; distance is integrated
+     * from the current sensor speed (or power-estimated speed). Heart rate,
+     * cadence and power are taken from the supplied sensor values.
+     */
+    public void updateIndoor(int heartRate, int cadence, int power, long nowMs) {
+        if (_lastIndoorTick < 0) {
+            _lastIndoorTick = nowMs;
+            return;
+        }
+        long delta = nowMs - _lastIndoorTick;
+        if (delta <= 0) {
+            _lastIndoorTick = nowMs;
+            return;
+        }
+        _lastIndoorTick = nowMs;
+        _elapsedTime += delta;
+        float speed = getSpeed();
+        _distance += speed * (delta / 1000f);
+        _hearRate = heartRate;
+        _cadence = cadence;
+        _power = power;
+    }
+
+    public void saveCurrentLocationAtInterval(long timeMs) {
+        if (!_saveLocation) {
+            return;
+        }
+        if (!_indoor && currentLocation == null) {
+            return;
+        }
+        if (!_indoor) {
+            lastSavedLocation = currentLocation;
+        }
+        _saveLocation(timeMs);
+    }
 
     public String getTCX(final String sportType) {
         StringBuilder tcx = new StringBuilder();
@@ -804,8 +877,10 @@ public class AdvancedLocation {
                 time = sdf.format(netDate);
                 time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
                 tcx.append("  <Trackpoint>\n    <Time>"+time+"</Time>\n    ");
-                tcx.append("<Position>\n      <LatitudeDegrees>"+cursor.getString(2)+"</LatitudeDegrees>\n      ");
-                tcx.append("<LongitudeDegrees>"+cursor.getString(3)+"</LongitudeDegrees>\n    </Position>\n");
+                if (!cursor.isNull(2) && !cursor.isNull(3)) {
+                    tcx.append("<Position>\n      <LatitudeDegrees>"+cursor.getString(2)+"</LatitudeDegrees>\n      ");
+                    tcx.append("<LongitudeDegrees>"+cursor.getString(3)+"</LongitudeDegrees>\n    </Position>\n");
+                }
                 tcx.append("    <AltitudeMeters>"+cursor.getString(4)+"</AltitudeMeters>\n");
                 tcx.append("    <DistanceMeters>"+cursor.getString(14)+"</DistanceMeters>\n");
 
@@ -880,30 +955,32 @@ public class AdvancedLocation {
                 time = sdf.format(netDate);
                 time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
 
-                gpx.append("<trkpt lat=\"" + cursor.getString(2) + "\" lon=\"" + cursor.getString(3) + "\">\n"
-                        + "  <ele>" + cursor.getString(4) + "</ele>\n"
-                        + "  <time>" + time + "</time>\n");
-                if (extended || !cursor.isNull(10) || !cursor.isNull(11)) {
-                    gpx.append("  <extensions>\n");
-                    if (extended) {
-                        gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n"
-                                 + "    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n"
-                                 + "    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n"
-                                 + "    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
-                    }
-                    if (!cursor.isNull(10) || !cursor.isNull(11)) {
-                        gpx.append("    <gpxtpx:TrackPointExtension>\n");
-                        if (!cursor.isNull(10)) {
-                            gpx.append("    <gpxtpx:hr>" + cursor.getString(10) + "</gpxtpx:hr>\n");
+                if (!cursor.isNull(2) && !cursor.isNull(3)) {
+                    gpx.append("<trkpt lat=\"" + cursor.getString(2) + "\" lon=\"" + cursor.getString(3) + "\">\n"
+                            + "  <ele>" + cursor.getString(4) + "</ele>\n"
+                            + "  <time>" + time + "</time>\n");
+                    if (extended || !cursor.isNull(10) || !cursor.isNull(11)) {
+                        gpx.append("  <extensions>\n");
+                        if (extended) {
+                            gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n"
+                                     + "    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n"
+                                     + "    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n"
+                                     + "    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
                         }
-                        if (!cursor.isNull(11)) {
-                            gpx.append("    <gpxtpx:cad>" + cursor.getString(11) + "</gpxtpx:cad>\n");
+                        if (!cursor.isNull(10) || !cursor.isNull(11)) {
+                            gpx.append("    <gpxtpx:TrackPointExtension>\n");
+                            if (!cursor.isNull(10)) {
+                                gpx.append("    <gpxtpx:hr>" + cursor.getString(10) + "</gpxtpx:hr>\n");
+                            }
+                            if (!cursor.isNull(11)) {
+                                gpx.append("    <gpxtpx:cad>" + cursor.getString(11) + "</gpxtpx:cad>\n");
+                            }
+                            gpx.append("    </gpxtpx:TrackPointExtension>\n");
                         }
-                        gpx.append("    </gpxtpx:TrackPointExtension>\n");
+                        gpx.append("  </extensions>\n");
                     }
-                    gpx.append("  </extensions>\n");
+                    gpx.append("</trkpt>\n");
                 }
-                gpx.append("</trkpt>\n");
                 prevTime = Long.parseLong(cursor.getString(1));
             } while (cursor.moveToNext());
             gpx.append("</trkseg>\n"
@@ -1014,6 +1091,15 @@ public class AdvancedLocation {
 
     public int getMaxPower() {
         return _maxPower;
+    }
+
+    public boolean hasPowerData() {
+        String q = "SELECT COUNT(*) FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME
+                + " WHERE loca_power IS NOT NULL AND loca_power > 0";
+        Cursor c = db.rawQuery(q, null);
+        boolean has = c.moveToFirst() && c.getInt(0) > 0;
+        c.close();
+        return has;
     }
 
     public boolean hasPowerData() {
