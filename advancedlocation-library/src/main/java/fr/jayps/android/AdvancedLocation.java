@@ -244,6 +244,10 @@ public class AdvancedLocation {
         return _totalElapsedTime;
     }
 
+    public int getTotalTimeSeconds() {
+        return (int) (_totalElapsedTime / 1000);
+    }
+
     public long getTime() {
         if (currentLocation != null) {
             return currentLocation.getTime();
