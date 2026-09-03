@@ -110,6 +110,7 @@ public class AdvancedLocation {
     protected double _ascent = 0; // in m
     protected long _elapsedTime = 0; // in ms
 
+    protected long _totalElapsedTime = 0; // in ms, always accumulates (including stationary)
     protected float _averageSpeed = 0; // in m/s
     protected float _maxSpeed = 0; // in m/s
     protected float _ascentRate = 0; // in m/s
@@ -239,6 +240,10 @@ public class AdvancedLocation {
         return _elapsedTime;
     }
 
+    public long getTotalElapsedTime() {
+        return _totalElapsedTime;
+    }
+
     public long getTime() {
         if (currentLocation != null) {
             return currentLocation.getTime();
@@ -356,6 +361,10 @@ public class AdvancedLocation {
     // setters
     public void setElapsedTime(long elapsedTime) {
         this._elapsedTime = elapsedTime;
+    }
+
+    public void setTotalElapsedTime(long totalElapsedTime) {
+        this._totalElapsedTime = totalElapsedTime;
     }
 
     public void setDistance(float distance) {
@@ -526,6 +535,7 @@ public class AdvancedLocation {
                 (localAverageSpeed > _minSpeedToComputeStats)
             ) {
                 _elapsedTime += deltaTime;
+                _totalElapsedTime += deltaTime;
                 _distance += deltaDistance;
                 _averageSpeed = _elapsedTime > 0 ? ((float) _distance / ((float) _elapsedTime / 1000f)) : 0;
 
@@ -829,9 +839,12 @@ public class AdvancedLocation {
         _elapsedTime += delta;
         float speed = getSpeed();
         _distance += speed * (delta / 1000f);
+        _averageSpeed = _elapsedTime > 0 ? _distance / (_elapsedTime / 1000f) : 0;
+        _maxSpeed = Math.max(speed, _maxSpeed);
         _hearRate = heartRate;
         _cadence = cadence;
         _power = power;
+        _maxPower = Math.max(power, _maxPower);
     }
 
     public void saveCurrentLocationAtInterval(long timeMs) {
