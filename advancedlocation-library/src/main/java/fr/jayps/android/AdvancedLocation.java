@@ -539,8 +539,6 @@ public class AdvancedLocation {
                 (localAverageSpeed > _minSpeedToComputeStats)
             ) {
                 _elapsedTime += deltaTime;
-                _totalElapsedTime += deltaTime;
-                _distance += deltaDistance;
                 _averageSpeed = _elapsedTime > 0 ? ((float) _distance / ((float) _elapsedTime / 1000f)) : 0;
 
                 if (lastGoodAscentLocation == null) {
@@ -671,6 +669,7 @@ public class AdvancedLocation {
 
             } // additional conditions to compute statistics
 
+            _totalElapsedTime += deltaTime;
             lastGoodLocation = currentLocation;
 
         } // if (currentLocation.getAccuracy() <= _minAccuracy) {
