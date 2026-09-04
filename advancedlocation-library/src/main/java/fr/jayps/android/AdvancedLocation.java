@@ -841,6 +841,7 @@ public class AdvancedLocation {
         }
         _lastIndoorTick = nowMs;
         _elapsedTime += delta;
+        _totalElapsedTime += delta;
         float speed = getSpeed();
         _distance += speed * (delta / 1000f);
         _averageSpeed = _elapsedTime > 0 ? _distance / (_elapsedTime / 1000f) : 0;
