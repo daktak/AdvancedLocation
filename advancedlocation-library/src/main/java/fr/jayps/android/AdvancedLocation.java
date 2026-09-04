@@ -670,6 +670,7 @@ public class AdvancedLocation {
             } // additional conditions to compute statistics
 
             _totalElapsedTime += deltaTime;
+            _distance += deltaDistance;
             lastGoodLocation = currentLocation;
 
         } // if (currentLocation.getAccuracy() <= _minAccuracy) {
