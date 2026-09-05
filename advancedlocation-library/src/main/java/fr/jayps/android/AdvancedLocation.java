@@ -973,32 +973,38 @@ public class AdvancedLocation {
                 time = sdf.format(netDate);
                 time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
 
-                if (!cursor.isNull(2) && !cursor.isNull(3)) {
+                boolean hasLatLon = !cursor.isNull(2) && !cursor.isNull(3);
+                if (hasLatLon) {
                     gpx.append("<trkpt lat=\"" + cursor.getString(2) + "\" lon=\"" + cursor.getString(3) + "\">\n"
                             + "  <ele>" + cursor.getString(4) + "</ele>\n"
                             + "  <time>" + time + "</time>\n");
-                    if (extended || !cursor.isNull(10) || !cursor.isNull(11)) {
-                        gpx.append("  <extensions>\n");
-                        if (extended) {
-                            gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n"
-                                     + "    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n"
-                                     + "    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n"
-                                     + "    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
-                        }
-                        if (!cursor.isNull(10) || !cursor.isNull(11)) {
-                            gpx.append("    <gpxtpx:TrackPointExtension>\n");
-                            if (!cursor.isNull(10)) {
-                                gpx.append("    <gpxtpx:hr>" + cursor.getString(10) + "</gpxtpx:hr>\n");
-                            }
-                            if (!cursor.isNull(11)) {
-                                gpx.append("    <gpxtpx:cad>" + cursor.getString(11) + "</gpxtpx:cad>\n");
-                            }
-                            gpx.append("    </gpxtpx:TrackPointExtension>\n");
-                        }
-                        gpx.append("  </extensions>\n");
+                } else {
+                    gpx.append("<trkpt>\n  <time>" + time + "</time>\n");
+                    if (!cursor.isNull(4)) {
+                        gpx.append("  <ele>" + cursor.getString(4) + "</ele>\n");
                     }
-                    gpx.append("</trkpt>\n");
                 }
+                if (extended || !cursor.isNull(10) || !cursor.isNull(11)) {
+                    gpx.append("  <extensions>\n");
+                    if (extended) {
+                        gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n"
+                                 + "    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n"
+                                 + "    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n"
+                                 + "    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
+                    }
+                    if (!cursor.isNull(10) || !cursor.isNull(11)) {
+                        gpx.append("    <gpxtpx:TrackPointExtension>\n");
+                        if (!cursor.isNull(10)) {
+                            gpx.append("    <gpxtpx:hr>" + cursor.getString(10) + "</gpxtpx:hr>\n");
+                        }
+                        if (!cursor.isNull(11)) {
+                            gpx.append("    <gpxtpx:cad>" + cursor.getString(11) + "</gpxtpx:cad>\n");
+                        }
+                        gpx.append("    </gpxtpx:TrackPointExtension>\n");
+                    }
+                    gpx.append("  </extensions>\n");
+                }
+                gpx.append("</trkpt>\n");
                 prevTime = Long.parseLong(cursor.getString(1));
             } while (cursor.moveToNext());
             gpx.append("</trkseg>\n"
