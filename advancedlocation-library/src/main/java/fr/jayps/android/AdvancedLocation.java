@@ -1075,6 +1075,15 @@ public class AdvancedLocation {
         String sql = "DELETE FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME;
         db.execSQL(sql);
     }
+    
+    public void close() {
+        if (db != null && db.isOpen()) {
+            db.close();
+        }
+        if (dbHelper != null) {
+            dbHelper.close();
+        }
+    }
 
     // log functions
     private enum LoggerType { LOG, TOAST };

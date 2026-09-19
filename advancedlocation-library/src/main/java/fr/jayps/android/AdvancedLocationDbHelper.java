@@ -90,5 +90,19 @@ public class AdvancedLocationDbHelper extends SQLiteOpenHelper {
     public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         onUpgrade(db, oldVersion, newVersion);
     }
+    
+    public synchronized void close() {
+        if (sInstance != null) {
+            try {
+                SQLiteDatabase db = sInstance.getWritableDatabase();
+                if (db != null && db.isOpen()) {
+                    db.close();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error closing database", e);
+            }
+            sInstance = null;
+        }
+    }
 }
 
