@@ -15,9 +15,17 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class AdvancedLocation {
     private static final String TAG = "AdvancedLocation";
+
+    // Thread-safety: ReadWriteLock for database operations
+    private final ReadWriteLock dbLock = new ReentrantReadWriteLock();
+    private final Lock readLock = dbLock.readLock();
+    private final Lock writeLock = dbLock.writeLock();
 
     protected class LocationWithExtraFields extends Location {
         public float distance = 0; // in m
@@ -161,7 +169,40 @@ public class AdvancedLocation {
     public AdvancedLocation(Context context) {
         this._context = context;
         dbHelper = AdvancedLocationDbHelper.getInstance(context);
-        db = dbHelper.getWritableDatabase();
+        writeLock.lock();
+        try {
+            db = dbHelper.getWritableDatabase();
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    // Thread-safe database access methods.
+    // getReadableDatabase()/getWritableDatabase() lazily (re)open the database if it has been closed.
+    private SQLiteDatabase getReadableDatabase() {
+        readLock.lock();
+        try {
+            if (db == null || !db.isOpen()) {
+                dbHelper = AdvancedLocationDbHelper.getInstance(_context);
+                db = dbHelper.getReadableDatabase();
+            }
+            return db;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    private SQLiteDatabase getWritableDatabase() {
+        writeLock.lock();
+        try {
+            if (db == null || !db.isOpen()) {
+                dbHelper = AdvancedLocationDbHelper.getInstance(_context);
+                db = dbHelper.getWritableDatabase();
+            }
+            return db;
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     // getters
@@ -811,7 +852,7 @@ public class AdvancedLocation {
         values.put("loca_distance", this.getDistance());
         //values.put("loca_comment", "");
 
-        long newRowId = db.insert(
+        long newRowId = getWritableDatabase().insert(
                 AdvancedLocationDbHelper.Location.TABLE_NAME,
                 null,
                 values);
@@ -866,6 +907,8 @@ public class AdvancedLocation {
     }
 
     public String getTCX(final String sportType) {
+        readLock.lock();
+        try {
         StringBuilder tcx = new StringBuilder();
         tcx.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
             + "<TrainingCenterDatabase xsi:schemaLocation=\"http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd\" "
@@ -876,10 +919,11 @@ public class AdvancedLocation {
             + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:ns4=\"http://www.garmin.com/xmlschemas/ProfileExtension/v1\">\n");
 
         String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed, loca_distance FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
-        Cursor cursor = db.rawQuery(selectQuery, null);
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
         long itemId = -1;
         int trackNumber = 1;
+        try {
         if (cursor.moveToFirst()) {
             String time = "";
             Date netDate = (new Date(Long.parseLong(cursor.getString(1))));
@@ -920,12 +964,20 @@ public class AdvancedLocation {
             } while (cursor.moveToNext());
             tcx.append("</Track>\n</Lap>\n</Activity>\n</Activities>\n");
         }
+        } finally {
+            cursor.close();
+        }
 
         tcx.append("</TrainingCenterDatabase>");
         return tcx.toString();
+        } finally {
+            readLock.unlock();
+        }
     }
 
     public String getGPX(boolean extended) {
+        readLock.lock();
+        try {
         StringBuilder gpx = new StringBuilder();
         String creator = "JayPS";
         if (this._context != null) {
@@ -940,10 +992,11 @@ public class AdvancedLocation {
 
 
         String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
-        Cursor cursor = db.rawQuery(selectQuery, null);
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
         long itemId = -1;
         int trackNumber = 1;
+        try {
         if (cursor.moveToFirst()) {
             gpx.append("<trk>\n"
                     + "<name>Track #1</name>\n"
@@ -1011,12 +1064,20 @@ public class AdvancedLocation {
                     + "</trk>\n");
 
         }
+        } finally {
+            cursor.close();
+        }
         gpx.append("</gpx>\n");
         //Logger(gpx.toString());
         return gpx.toString();
+        } finally {
+            readLock.unlock();
+        }
     }
 
     public String getRunkeeperJson(String type) {
+        readLock.lock();
+        try {
         StringBuilder json = new StringBuilder();
         StringBuilder hr = new StringBuilder();
         String notes = "Track generated by JayPS, http://www.pebblebike.com";
@@ -1026,8 +1087,9 @@ public class AdvancedLocation {
 
         String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
         //selectQuery += " LIMIT 10";
-        Cursor cursor = db.rawQuery(selectQuery, null);
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
+        try {
         if (cursor.moveToFirst()) {
             long firstTime = -1;
 
@@ -1070,18 +1132,35 @@ public class AdvancedLocation {
         json.append("}");
         //Logger(json.toString());
         return json.toString();
+        } finally {
+            cursor.close();
+        }
+        } finally {
+            readLock.unlock();
+        }
     }
     public void resetGPX() {
-        String sql = "DELETE FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME;
-        db.execSQL(sql);
+        writeLock.lock();
+        try {
+            String sql = "DELETE FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME;
+            getWritableDatabase().execSQL(sql);
+        } finally {
+            writeLock.unlock();
+        }
     }
     
     public void close() {
-        if (db != null && db.isOpen()) {
-            db.close();
-        }
-        if (dbHelper != null) {
-            dbHelper.close();
+        writeLock.lock();
+        try {
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
+            if (dbHelper != null) {
+                dbHelper.close();
+            }
+            db = null;
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -1129,7 +1208,7 @@ public class AdvancedLocation {
     public boolean hasPowerData() {
         String q = "SELECT COUNT(*) FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME
                 + " WHERE loca_power IS NOT NULL AND loca_power > 0";
-        Cursor c = db.rawQuery(q, null);
+        Cursor c = getReadableDatabase().rawQuery(q, null);
         boolean has = c.moveToFirst() && c.getInt(0) > 0;
         c.close();
         return has;
@@ -1143,10 +1222,11 @@ public class AdvancedLocation {
         if (seconds > 0) {
             selectQuery += " WHERE loca_time >= "+time;
         }
-        Cursor cursor = db.rawQuery(selectQuery, null);
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
         int count = 0;
         int sum = 0;
         double avg = 0.0;
+        try {
         if (cursor.moveToFirst()) {
             do {
                 count++;
@@ -1157,6 +1237,9 @@ public class AdvancedLocation {
             } while (cursor.moveToNext());
             avg = sum / count;
         }
+        } finally {
+            cursor.close();
+        }
         //Logger(String.format("avgdPower time $%d count %d",seconds, count));
         return (int) Math.round(avg);
     }
@@ -1166,10 +1249,11 @@ public class AdvancedLocation {
         long timeMilli = date.getTime() - (seconds * 1000);
         String time = String.format("%d",timeMilli);
         String selectQuery = "SELECT loca_power from "+AdvancedLocationDbHelper.Location.TABLE_NAME+" WHERE loca_time >= "+time;
-        Cursor cursor = db.rawQuery(selectQuery, null);
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
         int count = 0;
         double sum = 0;
         double avg = 0.0;
+        try {
         if (cursor.moveToFirst()) {
             do {
                 count++;
@@ -1179,6 +1263,9 @@ public class AdvancedLocation {
                 }
             } while (cursor.moveToNext());
             avg = sum / count;
+        }
+        } finally {
+            cursor.close();
         }
         double np = Math.pow(avg, 1.0/4);
         //Logger(String.format("NormalizedPower time $%d count %d",seconds, count));
