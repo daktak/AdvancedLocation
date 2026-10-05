@@ -991,7 +991,7 @@ public class AdvancedLocation {
                 + "<gpx xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:gpxtpx=\"http://www.garmin.com/xmlschemas/TrackPointExtension/v1\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" creator=\"" + creator + "\" version=\"1.1\" xsi:schemaLocation=\"http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd  http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd\" xmlns:pb10=\"http://www.pebblebike.com/GPX/1/0/\">\n");
 
 
-        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
+        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
         Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
         long itemId = -1;
@@ -1028,30 +1028,46 @@ public class AdvancedLocation {
 
                 boolean hasLatLon = !cursor.isNull(2) && !cursor.isNull(3);
                 if (hasLatLon) {
-                    gpx.append("<trkpt lat=\"" + cursor.getString(2) + "\" lon=\"" + cursor.getString(3) + "\">\n"
-                            + "  <ele>" + cursor.getString(4) + "</ele>\n"
-                            + "  <time>" + time + "</time>\n");
+                    gpx.append("<trkpt lat=\"" + cursor.getString(2) + "\" lon=\"" + cursor.getString(3) + "\">\n");
+                    if (!cursor.isNull(4)) {
+                        gpx.append("  <ele>" + cursor.getString(4) + "</ele>\n");
+                    }
+                    gpx.append("  <time>" + time + "</time>\n");
                 } else {
                     gpx.append("<trkpt>\n  <time>" + time + "</time>\n");
                     if (!cursor.isNull(4)) {
                         gpx.append("  <ele>" + cursor.getString(4) + "</ele>\n");
                     }
                 }
-                if (extended || !cursor.isNull(10) || !cursor.isNull(11)) {
+                if (extended || !cursor.isNull(10) || !cursor.isNull(11) || !cursor.isNull(12)) {
                     gpx.append("  <extensions>\n");
                     if (extended) {
-                        gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n"
-                                 + "    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n"
-                                 + "    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n"
-                                 + "    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
+                        if (!cursor.isNull(5)) {
+                            gpx.append("    <pb10:accuracy>" + cursor.getString(5) + "</pb10:accuracy>\n");
+                        }
+                        if (!cursor.isNull(7)) {
+                            gpx.append("    <pb10:ascent>" + cursor.getString(7) + "</pb10:ascent>\n");
+                        }
+                        if (!cursor.isNull(8)) {
+                            gpx.append("    <pb10:ele_gps>" + cursor.getString(8) + "</pb10:ele_gps>\n");
+                        }
+                        if (!cursor.isNull(9)) {
+                            gpx.append("    <pb10:ele_pressure>" + cursor.getString(9) + "</pb10:ele_pressure>\n");
+                        }
+                        if (!cursor.isNull(12)) {
+                            gpx.append("    <pb10:power>" + cursor.getString(12) + "</pb10:power>\n");
+                        }
                     }
-                    if (!cursor.isNull(10) || !cursor.isNull(11)) {
+                    if (!cursor.isNull(10) || !cursor.isNull(11) || !cursor.isNull(12)) {
                         gpx.append("    <gpxtpx:TrackPointExtension>\n");
                         if (!cursor.isNull(10)) {
                             gpx.append("    <gpxtpx:hr>" + cursor.getString(10) + "</gpxtpx:hr>\n");
                         }
                         if (!cursor.isNull(11)) {
                             gpx.append("    <gpxtpx:cad>" + cursor.getString(11) + "</gpxtpx:cad>\n");
+                        }
+                        if (!cursor.isNull(12)) {
+                            gpx.append("    <gpxtpx:watts>" + cursor.getString(12) + "</gpxtpx:watts>\n");
                         }
                         gpx.append("    </gpxtpx:TrackPointExtension>\n");
                     }
