@@ -25,3 +25,5 @@ jobs:
       run: chmod +x gradlew
     - name: Build with Gradle
       run: ./gradlew assembleDebug
+      env:
+        JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
