@@ -930,7 +930,18 @@ public class AdvancedLocation {
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
             time = sdf.format(netDate);
             time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
-            tcx.append("<Activities>\n<Activity Sport=\""+sportType+"\">\n<Id>"+time+"</Id>\n<Lap>\n<Track>\n");
+            tcx.append("<Activities>\n<Activity Sport=\""+sportType+"\">\n<Id>"+time+"</Id>\n");
+            tcx.append("<Lap StartTime=\""+time+"\">\n");
+            tcx.append("    <TotalTimeSeconds>"+(getElapsedTime()/1000.0)+"</TotalTimeSeconds>\n");
+            tcx.append("    <DistanceMeters>"+getDistance()+"</DistanceMeters>\n");
+            if (getMaxSpeed() > 0) {
+                tcx.append("    <MaximumSpeed>"+getMaxSpeed()+"</MaximumSpeed>\n");
+            }
+            // no calorie model in the app; Calories is required and unsignedShort, so 0 is the honest value
+            tcx.append("    <Calories>0</Calories>\n");
+            tcx.append("    <Intensity>Active</Intensity>\n");
+            tcx.append("    <TriggerMethod>Manual</TriggerMethod>\n");
+            tcx.append("<Track>\n");
             long prevTime = -1;
 
             do {
@@ -943,8 +954,14 @@ public class AdvancedLocation {
                     tcx.append("<Position>\n      <LatitudeDegrees>"+cursor.getString(2)+"</LatitudeDegrees>\n      ");
                     tcx.append("<LongitudeDegrees>"+cursor.getString(3)+"</LongitudeDegrees>\n    </Position>\n");
                 }
-                tcx.append("    <AltitudeMeters>"+cursor.getString(4)+"</AltitudeMeters>\n");
-                tcx.append("    <DistanceMeters>"+cursor.getString(14)+"</DistanceMeters>\n");
+                if (!cursor.isNull(4)) {
+                    //Altitude; NULL indoors
+                    tcx.append("    <AltitudeMeters>"+cursor.getString(4)+"</AltitudeMeters>\n");
+                }
+                if (!cursor.isNull(14)) {
+                    //NULL on rows recorded before the v4 migration added the column
+                    tcx.append("    <DistanceMeters>"+cursor.getString(14)+"</DistanceMeters>\n");
+                }
 
                 if (!cursor.isNull(10)) {
                     //HR
@@ -954,12 +971,17 @@ public class AdvancedLocation {
                     //CAD
                     tcx.append("    <Cadence>"+cursor.getString(11)+"</Cadence>\n");
                 }
-                tcx.append("    <Extensions>\n      <ns3:TPX>\n        <ns3:Speed>"+cursor.getString(13)+"</ns3:Speed>\n");
-                if (!cursor.isNull(12)) {
-                    //POWER
-                    tcx.append("        <ns3:Watts>"+cursor.getString(12)+"</ns3:Watts>\n");
+                if (!cursor.isNull(12) || !cursor.isNull(13)) {
+                    tcx.append("    <Extensions>\n      <ns3:TPX>\n");
+                    if (!cursor.isNull(13)) {
+                        tcx.append("        <ns3:Speed>"+cursor.getString(13)+"</ns3:Speed>\n");
+                    }
+                    if (!cursor.isNull(12)) {
+                        //POWER
+                        tcx.append("        <ns3:Watts>"+cursor.getString(12)+"</ns3:Watts>\n");
+                    }
+                    tcx.append("      </ns3:TPX>\n    </Extensions>\n");
                 }
-                tcx.append("      </ns3:TPX>\n    </Extensions>\n");
                 tcx.append("  </Trackpoint>\n");
             } while (cursor.moveToNext());
             tcx.append("</Track>\n</Lap>\n</Activity>\n</Activities>\n");
