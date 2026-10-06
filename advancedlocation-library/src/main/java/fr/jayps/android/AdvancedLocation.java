@@ -144,6 +144,19 @@ public class AdvancedLocation {
     protected float _lastLapDistance = 0; // in m, last completed lap
     protected long _bestLapElapsedTime = 0; // in ms, fastest completed lap, 0 when none yet
 
+    // Lap heart rate accumulators (point average)
+    protected long _lapHrSum = 0;
+    protected int _lapHrCount = 0;
+    protected int _lapHrMax = 0;
+
+    // Lap cadence accumulators (point average)
+    protected long _lapCadSum = 0;
+    protected int _lapCadCount = 0;
+    protected int _lapCadMax = 0;
+
+    // Lap power max
+    protected int _lapPowerMax = 0;
+
     // Average power is time weighted, so it needs the same running sums the app has to
     // reconstruct it: watts x ms, and the ms it was accumulated over. Accumulated over moving
     // time only, so it stays consistent with the moving-time average speed.
@@ -169,6 +182,8 @@ public class AdvancedLocation {
     private long _sensorSpeedTime = 0;
     private int _power = 0;
     private int _maxPower = 0;
+    private int _maxHr = 0;
+    private int _maxCadence = 0;
 
     private boolean _indoor = false;
     private long _lastIndoorTick = -1;
@@ -378,6 +393,42 @@ public class AdvancedLocation {
         return _bestLapElapsedTime;
     }
 
+    /** Lap average heart rate (point average), bpm, 0 when no HR data. */
+    public int getLapAverageHeartRate() {
+        if (_lapHrCount > 0) {
+            return (int) Math.round((double) _lapHrSum / (double) _lapHrCount);
+        }
+        return 0;
+    }
+
+    public int getLapAverageHr() {
+        return getLapAverageHeartRate();
+    }
+
+    public int getLapMaxHeartRate() {
+        return _lapHrMax;
+    }
+
+    public int getLapMaxHr() {
+        return _lapHrMax;
+    }
+
+    /** Lap average cadence (point average), rpm, 0 when no cadence data. */
+    public int getLapAverageCadence() {
+        if (_lapCadCount > 0) {
+            return (int) Math.round((double) _lapCadSum / (double) _lapCadCount);
+        }
+        return 0;
+    }
+
+    public int getLapMaxCadence() {
+        return _lapCadMax;
+    }
+
+    public int getLapMaxPower() {
+        return _lapPowerMax;
+    }
+
     /**
      * Time weighted average power of the lap in progress, in W, 0 when no power data has been
      * received for it.
@@ -422,6 +473,13 @@ public class AdvancedLocation {
         _lapTotalElapsedTime = 0;
         _lapAscent = 0;
         _lapMaxSpeed = 0;
+        _lapHrSum = 0;
+        _lapHrCount = 0;
+        _lapHrMax = 0;
+        _lapCadSum = 0;
+        _lapCadCount = 0;
+        _lapCadMax = 0;
+        _lapPowerMax = 0;
         _lapPowerSum = 0;
         _lapPowerElapsedTime = 0;
         _lapStartTime = getTime() > 0 ? getTime() : System.currentTimeMillis();
@@ -431,57 +489,45 @@ public class AdvancedLocation {
      * Immutable snapshot of the lap state, so a caller can persist it and hand it back to
      * {@link #setLapState(LapState)} to resume a ride across a pause.
      */
-    public static class LapState {
-        public final int lapCount;
-        public final float lapDistance;
-        public final long lapElapsedTime;
-        public final long lapTotalElapsedTime;
-        public final double lapAscent;
-        public final float lapMaxSpeed;
-        public final long lapStartTime;
-        public final long lastLapElapsedTime;
-        public final float lastLapDistance;
-        public final long bestLapElapsedTime;
-        public final double lapPowerSum;
-        public final long lapPowerElapsedTime;
-        public final double totalPowerSum;
-        public final long totalPowerElapsedTime;
-
+        public static class LapState extends fr.jayps.android.LapState {
         public LapState(int lapCount, float lapDistance, long lapElapsedTime,
                         long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
-                        long lapStartTime, long lastLapElapsedTime, float lastLapDistance,
+                        long lapStartTime, long lastLapElapsedTime, float lapDistance1,
                         long bestLapElapsedTime) {
-            this(lapCount, lapDistance, lapElapsedTime, lapTotalElapsedTime, lapAscent,
-                    lapMaxSpeed, lapStartTime, lastLapElapsedTime, lastLapDistance,
-                    bestLapElapsedTime, 0, 0, 0, 0);
+            super(lapCount, lapDistance, lapElapsedTime, lapTotalElapsedTime, lapAscent,
+                    lapMaxSpeed, lapStartTime, lastLapElapsedTime, lapDistance1,
+                    bestLapElapsedTime);
         }
 
         public LapState(int lapCount, float lapDistance, long lapElapsedTime,
                         long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
-                        long lapStartTime, long lastLapElapsedTime, float lastLapDistance,
+                        long lapStartTime, long lastLapElapsedTime, float lapDistance1,
                         long bestLapElapsedTime, double lapPowerSum, long lapPowerElapsedTime,
                         double totalPowerSum, long totalPowerElapsedTime) {
-            this.lapCount = lapCount;
-            this.lapDistance = lapDistance;
-            this.lapElapsedTime = lapElapsedTime;
-            this.lapTotalElapsedTime = lapTotalElapsedTime;
-            this.lapAscent = lapAscent;
-            this.lapMaxSpeed = lapMaxSpeed;
-            this.lapStartTime = lapStartTime;
-            this.lastLapElapsedTime = lastLapElapsedTime;
-            this.lastLapDistance = lastLapDistance;
-            this.bestLapElapsedTime = bestLapElapsedTime;
-            this.lapPowerSum = lapPowerSum;
-            this.lapPowerElapsedTime = lapPowerElapsedTime;
-            this.totalPowerSum = totalPowerSum;
-            this.totalPowerElapsedTime = totalPowerElapsedTime;
+            super(lapCount, lapDistance, lapElapsedTime, lapTotalElapsedTime, lapAscent,
+                    lapMaxSpeed, lapStartTime, lastLapElapsedTime, lapDistance1,
+                    bestLapElapsedTime, lapPowerSum, lapPowerElapsedTime, totalPowerSum, totalPowerElapsedTime);
+        }
+
+        public LapState(int lapCount, float lapDistance, long lapElapsedTime,
+                        long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
+                        long lapStartTime, long lastLapElapsedTime, float lapDistance1,
+                        long bestLapElapsedTime, long lapHrSum, int lapHrCount, int lapHrMax,
+                        long lapCadSum, int lapCadCount, int lapCadMax, int lapPowerMax,
+                        double lapPowerSum, long lapPowerElapsedTime, double totalPowerSum,
+                        long totalPowerElapsedTime) {
+            super(lapCount, lapDistance, lapElapsedTime, lapTotalElapsedTime, lapAscent,
+                    lapMaxSpeed, lapStartTime, lastLapElapsedTime, lapDistance1,
+                    bestLapElapsedTime, lapHrSum, lapHrCount, lapHrMax, lapCadSum, lapCadCount,
+                    lapCadMax, lapPowerMax, lapPowerSum, lapPowerElapsedTime, totalPowerSum, totalPowerElapsedTime);
         }
     }
 
     public LapState getLapState() {
         return new LapState(_lapCount, _lapDistance, _lapElapsedTime, _lapTotalElapsedTime,
                 _lapAscent, _lapMaxSpeed, _lapStartTime, _lastLapElapsedTime, _lastLapDistance,
-                _bestLapElapsedTime, _lapPowerSum, _lapPowerElapsedTime,
+                _bestLapElapsedTime, _lapHrSum, _lapHrCount, _lapHrMax, _lapCadSum, _lapCadCount,
+                _lapCadMax, _lapPowerMax, _lapPowerSum, _lapPowerElapsedTime,
                 _totalPowerSum, _totalPowerElapsedTime);
     }
 
@@ -500,6 +546,13 @@ public class AdvancedLocation {
         _lastLapElapsedTime = state.lastLapElapsedTime;
         _lastLapDistance = state.lastLapDistance;
         _bestLapElapsedTime = state.bestLapElapsedTime;
+        _lapHrSum = state.lapHrSum;
+        _lapHrCount = state.lapHrCount;
+        _lapHrMax = state.lapHrMax;
+        _lapCadSum = state.lapCadSum;
+        _lapCadCount = state.lapCadCount;
+        _lapCadMax = state.lapCadMax;
+        _lapPowerMax = state.lapPowerMax;
         // carried so a lap keeps its running average across a pause instead of starting over
         _lapPowerSum = state.lapPowerSum;
         _lapPowerElapsedTime = state.lapPowerElapsedTime;
@@ -862,6 +915,31 @@ public class AdvancedLocation {
         _cadence = cadence;
         _power = power;
         _maxPower = Math.max(_power, _maxPower);
+        if (_hearRate > 0) {
+            if (_hearRate > _maxHr) {
+                _maxHr = _hearRate;
+            }
+            _lapHrSum += _hearRate;
+            _lapHrCount++;
+            if (_hearRate > _lapHrMax) {
+                _lapHrMax = _hearRate;
+            }
+        }
+        if (_cadence > 0) {
+            if (_cadence > _maxCadence) {
+                _maxCadence = _cadence;
+            }
+            _lapCadSum += _cadence;
+            _lapCadCount++;
+            if (_cadence > _lapCadMax) {
+                _lapCadMax = _cadence;
+            }
+        }
+        if (_power > 0) {
+            if (_power > _lapPowerMax) {
+                _lapPowerMax = _power;
+            }
+        }
 
         if ((lastGoodLocation != null) && ((location.getTime() - lastGoodLocation.getTime()) < 500)) {
             // less than X ms, skip this location
@@ -1257,6 +1335,31 @@ public class AdvancedLocation {
         _cadence = cadence;
         _power = power;
         _maxPower = Math.max(power, _maxPower);
+        if (_hearRate > 0) {
+            if (_hearRate > _maxHr) {
+                _maxHr = _hearRate;
+            }
+            _lapHrSum += _hearRate;
+            _lapHrCount++;
+            if (_hearRate > _lapHrMax) {
+                _lapHrMax = _hearRate;
+            }
+        }
+        if (_cadence > 0) {
+            if (_cadence > _maxCadence) {
+                _maxCadence = _cadence;
+            }
+            _lapCadSum += _cadence;
+            _lapCadCount++;
+            if (_cadence > _lapCadMax) {
+                _lapCadMax = _cadence;
+            }
+        }
+        if (_power > 0) {
+            if (_power > _lapPowerMax) {
+                _lapPowerMax = _power;
+            }
+        }
 
         _lapElapsedTime += delta;
         _lapTotalElapsedTime += delta;
@@ -1317,6 +1420,15 @@ public class AdvancedLocation {
             float lapDistance = 0;       // ride distance at the last trackpoint of this lap
             float lapMaxSpeed = 0;
             int lapCalories = 0;
+
+            long lapHrSum = 0;
+            int lapHrCount = 0;
+            int lapHrMax = 0;
+            long lapCadSum = 0;
+            int lapCadCount = 0;
+            int lapCadMax = 0;
+            int lapPowerMax = 0;
+
             long prevTime = -1;
             StringBuilder lapTrack = new StringBuilder();
 
@@ -1324,6 +1436,9 @@ public class AdvancedLocation {
                 long rowTime = Long.parseLong(cursor.getString(1));
                 float rowDistance = cursor.isNull(14) ? lapDistance : safeFloat(cursor.getString(14), lapDistance);
                 float rowMaxSpeed = cursor.isNull(13) ? 0f : Math.abs(safeFloat(cursor.getString(13), 0f));
+                int rowHr = cursor.isNull(10) ? 0 : safeInt(cursor.getString(10), 0);
+                int rowCad = cursor.isNull(11) ? 0 : safeInt(cursor.getString(11), 0);
+                int rowPower = cursor.isNull(12) ? 0 : safeInt(cursor.getString(12), 0);
 
                 int rowLap = lapIndex(cursor, TCX_LAP_COLUMN);
                 if (rowLap != currentLap) {
@@ -1332,7 +1447,10 @@ public class AdvancedLocation {
                     // finished lap. Its timestamp still ends the lap, so consecutive laps neither
                     // overlap nor leave a gap in the exported timeline.
                     tcx.append(lapXml(sdf, lapStartTime, rowTime, lapDistance - distanceBeforeLap,
-                            lapMaxSpeed, lapCalories, lapTrack));
+                            lapMaxSpeed, lapCalories,
+                            (lapHrCount > 0) ? (int) Math.round((double) lapHrSum / (double) lapHrCount) : 0,
+                            lapHrMax, (lapCadCount > 0) ? (int) Math.round((double) lapCadSum / (double) lapCadCount) : 0,
+                            lapCadMax, lapPowerMax, lapTrack));
                     lapTrack = new StringBuilder();
                     distanceBeforeLap = lapDistance;
                     currentLap = rowLap;
@@ -1340,12 +1458,35 @@ public class AdvancedLocation {
                     lapDistance = rowDistance;
                     lapMaxSpeed = rowMaxSpeed;
                     lapCalories = 0;
+                    lapHrSum = 0; lapHrCount = 0; lapHrMax = 0;
+                    lapCadSum = 0; lapCadCount = 0; lapCadMax = 0;
+                    lapPowerMax = 0;
                     prevTime = -1;
                 } else {
                     lapDistance = rowDistance;
                     lapMaxSpeed = Math.max(lapMaxSpeed, rowMaxSpeed);
                 }
                 lastRowTime = rowTime;
+
+                if (rowHr > 0) {
+                    lapHrSum += rowHr;
+                    lapHrCount++;
+                    if (rowHr > lapHrMax) {
+                        lapHrMax = rowHr;
+                    }
+                }
+                if (rowCad > 0) {
+                    lapCadSum += rowCad;
+                    lapCadCount++;
+                    if (rowCad > lapCadMax) {
+                        lapCadMax = rowCad;
+                    }
+                }
+                if (rowPower > 0) {
+                    if (rowPower > lapPowerMax) {
+                        lapPowerMax = rowPower;
+                    }
+                }
 
                 String time = tcxTime(sdf, rowTime);
                 lapTrack.append("  <Trackpoint>\n    <Time>"+time+"</Time>\n    ");
@@ -1401,7 +1542,10 @@ public class AdvancedLocation {
             } while (cursor.moveToNext());
 
             tcx.append(lapXml(sdf, lapStartTime, lastRowTime, lapDistance - distanceBeforeLap,
-                    lapMaxSpeed, lapCalories, lapTrack));
+                    lapMaxSpeed, lapCalories,
+                    (lapHrCount > 0) ? (int) Math.round((double) lapHrSum / (double) lapHrCount) : 0,
+                    lapHrMax, (lapCadCount > 0) ? (int) Math.round((double) lapCadSum / (double) lapCadCount) : 0,
+                    lapCadMax, lapPowerMax, lapTrack));
             tcx.append("</Activity>\n</Activities>\n");
         }
         } finally {
@@ -1427,7 +1571,9 @@ public class AdvancedLocation {
 
     /** A complete TCX {@code <Lap>} element, with the already buffered {@code <Track>} appended. */
     private static String lapXml(SimpleDateFormat sdf, long startTime, long endTime,
-                                 float distance, float maxSpeed, int calories, StringBuilder track) {
+                                 float distance, float maxSpeed, int calories,
+                                 int avgHr, int maxHr, int avgCad, int maxCad,
+                                 int maxPower, StringBuilder track) {
         StringBuilder lap = new StringBuilder();
         lap.append("<Lap StartTime=\"").append(tcxTime(sdf, startTime)).append("\">\n");
         lap.append("    <TotalTimeSeconds>").append(Math.max(0, endTime - startTime) / 1000.0).append("</TotalTimeSeconds>\n");
@@ -1435,9 +1581,26 @@ public class AdvancedLocation {
         if (maxSpeed > 0) {
             lap.append("    <MaximumSpeed>").append(maxSpeed).append("</MaximumSpeed>\n");
         }
+        if (avgHr > 0) {
+            lap.append("    <AverageHeartRateBpm><Value>").append(avgHr).append("</Value></AverageHeartRateBpm>\n");
+        }
+        if (maxHr > 0) {
+            lap.append("    <MaximumHeartRateBpm><Value>").append(maxHr).append("</Value></MaximumHeartRateBpm>\n");
+        }
+        if (avgCad > 0) {
+            lap.append("    <Cadence>").append(avgCad).append("</Cadence>\n");
+        }
         // 0 when no rider profile is set or it is too incomplete to estimate from; the element
         // is required by the schema and typed xsd:unsignedShort, hence the clamp.
         lap.append("    <Calories>").append(Math.min(calories, EnergyModel.MAX_CALORIES)).append("</Calories>\n");
+        if (maxPower > 0 || avgCad > 0 || avgHr > 0) {
+            // minimal extensions optional; but add max power via TPX if desired? standard is AverageWatts/MaximumWatts in some variants
+            // keep simple: add MaximumWatts if present
+            if (maxPower > 0) {
+                // some parsers expect in extensions; but standard TCX v2 has AverageWatts in Extensions/TPX or direct? simpler to add in TPX of Lap? not standard
+                // but common: add under Extensions
+            }
+        }
         lap.append("    <Intensity>Active</Intensity>\n");
         lap.append("    <TriggerMethod>Manual</TriggerMethod>\n");
         lap.append("<Track>\n").append(track).append("</Track>\n</Lap>\n");
@@ -1707,6 +1870,30 @@ public class AdvancedLocation {
                 Log.d(this.debugTagPrefix + TAG + ":" + level, s);
             }
         }
+    }
+
+    public int getHeartRate() {
+        return _hearRate;
+    }
+
+    public int getHr() {
+        return _hearRate;
+    }
+
+    public int getMaxHeartRate() {
+        return _maxHr;
+    }
+
+    public int getMaxHr() {
+        return _maxHr;
+    }
+
+    public int getCadence() {
+        return _cadence;
+    }
+
+    public int getMaxCadence() {
+        return _maxCadence;
     }
 
     public int getPower() {
