@@ -442,11 +442,25 @@ public class AdvancedLocation {
         public final long lastLapElapsedTime;
         public final float lastLapDistance;
         public final long bestLapElapsedTime;
+        public final double lapPowerSum;
+        public final long lapPowerElapsedTime;
+        public final double totalPowerSum;
+        public final long totalPowerElapsedTime;
 
         public LapState(int lapCount, float lapDistance, long lapElapsedTime,
                         long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
                         long lapStartTime, long lastLapElapsedTime, float lastLapDistance,
                         long bestLapElapsedTime) {
+            this(lapCount, lapDistance, lapElapsedTime, lapTotalElapsedTime, lapAscent,
+                    lapMaxSpeed, lapStartTime, lastLapElapsedTime, lastLapDistance,
+                    bestLapElapsedTime, 0, 0, 0, 0);
+        }
+
+        public LapState(int lapCount, float lapDistance, long lapElapsedTime,
+                        long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
+                        long lapStartTime, long lastLapElapsedTime, float lastLapDistance,
+                        long bestLapElapsedTime, double lapPowerSum, long lapPowerElapsedTime,
+                        double totalPowerSum, long totalPowerElapsedTime) {
             this.lapCount = lapCount;
             this.lapDistance = lapDistance;
             this.lapElapsedTime = lapElapsedTime;
@@ -457,19 +471,21 @@ public class AdvancedLocation {
             this.lastLapElapsedTime = lastLapElapsedTime;
             this.lastLapDistance = lastLapDistance;
             this.bestLapElapsedTime = bestLapElapsedTime;
+            this.lapPowerSum = lapPowerSum;
+            this.lapPowerElapsedTime = lapPowerElapsedTime;
+            this.totalPowerSum = totalPowerSum;
+            this.totalPowerElapsedTime = totalPowerElapsedTime;
         }
     }
 
     public LapState getLapState() {
         return new LapState(_lapCount, _lapDistance, _lapElapsedTime, _lapTotalElapsedTime,
                 _lapAscent, _lapMaxSpeed, _lapStartTime, _lastLapElapsedTime, _lastLapDistance,
-                _bestLapElapsedTime);
+                _bestLapElapsedTime, _lapPowerSum, _lapPowerElapsedTime,
+                _totalPowerSum, _totalPowerElapsedTime);
     }
 
-    /**
-     * Restores a snapshot taken by {@link #getLapState()}. The power running sums are not part of
-     * the snapshot: they are rebuilt as power data arrives again.
-     */
+    /** Restores a snapshot taken by {@link #getLapState()}. */
     public void setLapState(LapState state) {
         if (state == null) {
             return;
@@ -484,6 +500,11 @@ public class AdvancedLocation {
         _lastLapElapsedTime = state.lastLapElapsedTime;
         _lastLapDistance = state.lastLapDistance;
         _bestLapElapsedTime = state.bestLapElapsedTime;
+        // carried so a lap keeps its running average across a pause instead of starting over
+        _lapPowerSum = state.lapPowerSum;
+        _lapPowerElapsedTime = state.lapPowerElapsedTime;
+        _totalPowerSum = state.totalPowerSum;
+        _totalPowerElapsedTime = state.totalPowerElapsedTime;
     }
 
     public long getTime() {
@@ -909,10 +930,14 @@ public class AdvancedLocation {
                 _lapElapsedTime += deltaTime;
                 // Time weighted power, accumulated over the same moving window as the lap's
                 // elapsed time so the average speed and the average power share a denominator.
-                _lapPowerSum += power * (double) deltaTime;
-                _lapPowerElapsedTime += deltaTime;
-                _totalPowerSum += power * (double) deltaTime;
-                _totalPowerElapsedTime += deltaTime;
+                // A non positive power means "no meter connected" rather than "zero watts", so
+                // those intervals are left out instead of dragging the average towards zero.
+                if (power > 0) {
+                    _lapPowerSum += power * (double) deltaTime;
+                    _lapPowerElapsedTime += deltaTime;
+                    _totalPowerSum += power * (double) deltaTime;
+                    _totalPowerElapsedTime += deltaTime;
+                }
 
                 if (_lapStartTime == 0) {
                     _lapStartTime = currentLocation.getTime();
@@ -1237,10 +1262,13 @@ public class AdvancedLocation {
         _lapTotalElapsedTime += delta;
         _lapDistance += speed * (delta / 1000f);
         _lapMaxSpeed = Math.max(speed, _lapMaxSpeed);
-        _lapPowerSum += power * (double) delta;
-        _lapPowerElapsedTime += delta;
-        _totalPowerSum += power * (double) delta;
-        _totalPowerElapsedTime += delta;
+        // as outdoors: a non positive power means no meter connected, not zero watts
+        if (power > 0) {
+            _lapPowerSum += power * (double) delta;
+            _lapPowerElapsedTime += delta;
+            _totalPowerSum += power * (double) delta;
+            _totalPowerElapsedTime += delta;
+        }
         if (_lapStartTime == 0) {
             _lapStartTime = nowMs;
         }
@@ -1294,26 +1322,28 @@ public class AdvancedLocation {
 
             do {
                 long rowTime = Long.parseLong(cursor.getString(1));
-                if (!cursor.isNull(14)) {
-                    lapDistance = safeFloat(cursor.getString(14), lapDistance);
-                }
-                if (!cursor.isNull(13)) {
-                    lapMaxSpeed = Math.max(lapMaxSpeed, Math.abs(safeFloat(cursor.getString(13), 0f)));
-                }
+                float rowDistance = cursor.isNull(14) ? lapDistance : safeFloat(cursor.getString(14), lapDistance);
+                float rowMaxSpeed = cursor.isNull(13) ? 0f : Math.abs(safeFloat(cursor.getString(13), 0f));
 
                 int rowLap = lapIndex(cursor, TCX_LAP_COLUMN);
                 if (rowLap != currentLap) {
-                    // The lap runs up to the first trackpoint of the next one, so consecutive
-                    // laps neither overlap nor leave a gap in the exported timeline.
+                    // The closing lap keeps its own totals: this row already belongs to the next
+                    // lap, so including its cumulative distance or speed here would inflate the
+                    // finished lap. Its timestamp still ends the lap, so consecutive laps neither
+                    // overlap nor leave a gap in the exported timeline.
                     tcx.append(lapXml(sdf, lapStartTime, rowTime, lapDistance - distanceBeforeLap,
                             lapMaxSpeed, lapCalories, lapTrack));
                     lapTrack = new StringBuilder();
                     distanceBeforeLap = lapDistance;
                     currentLap = rowLap;
                     lapStartTime = rowTime;
-                    lapMaxSpeed = 0;
+                    lapDistance = rowDistance;
+                    lapMaxSpeed = rowMaxSpeed;
                     lapCalories = 0;
                     prevTime = -1;
+                } else {
+                    lapDistance = rowDistance;
+                    lapMaxSpeed = Math.max(lapMaxSpeed, rowMaxSpeed);
                 }
                 lastRowTime = rowTime;
 
