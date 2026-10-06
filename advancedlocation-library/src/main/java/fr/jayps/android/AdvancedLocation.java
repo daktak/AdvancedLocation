@@ -12,8 +12,10 @@ import android.content.Context;
 import android.widget.Toast;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -145,6 +147,12 @@ public class AdvancedLocation {
 
     private boolean _indoor = false;
     private long _lastIndoorTick = -1;
+
+    // Energy expenditure estimation. The profile is injected by the app; the library never reads
+    // preferences itself.
+    private EnergyModel.Profile _riderProfile = null;
+    private int _calories = 0;
+    private boolean _caloriesDirty = true;
 
     // debug levels
     public int debugLevel = 0;
@@ -466,6 +474,132 @@ public class AdvancedLocation {
 
     public boolean isIndoor() {
         return _indoor;
+    }
+
+    /**
+     * Supplies the rider profile used for energy expenditure estimation. Any field may be 0 to mean
+     * "not set", in which case {@link EnergyModel} falls back to a less demanding estimator.
+     *
+     * @param ageYears   age in years, 0 when unknown
+     * @param female     false selects the male Keytel/Mifflin coefficients
+     * @param weightKg   body weight in kg, 0 when unknown
+     * @param heightCm   body height in cm, used by the basal metabolic floor
+     * @param restingHr  resting heart rate in bpm, 0 when unknown
+     * @param maxHr      max heart rate in bpm, 0 when unknown
+     */
+    public void setRiderProfile(int ageYears, boolean female, int weightKg, int heightCm,
+                                int restingHr, int maxHr) {
+        EnergyModel.Profile profile = new EnergyModel.Profile(ageYears, female, weightKg, heightCm,
+                restingHr, maxHr);
+        if (profile.equals(_riderProfile)) {
+            return;
+        }
+        _riderProfile = profile;
+        _caloriesDirty = true;
+    }
+
+    /**
+     * Estimated energy expenditure over the whole recorded track, in kcal.
+     *
+     * <p>Returns 0 when no rider profile has been supplied or the profile is too incomplete to
+     * estimate from. The result is cached and invalidated whenever a point is written.
+     */
+    public int getCalories() {
+        if (!_caloriesDirty) {
+            return _calories;
+        }
+        _calories = computeCalories();
+        _caloriesDirty = false;
+        return _calories;
+    }
+
+    private int _calorieTier() {
+        return _riderProfile == null ? EnergyModel.TIER_NONE
+                : EnergyModel.tierFor(_riderProfile);
+    }
+
+    /** Reads a speed column stored as TEXT in m/s and converts it to km/h. */
+    private static double speedKmh(Cursor cursor, int column) {
+        if (cursor.isNull(column)) {
+            return -1;
+        }
+        return Math.abs(safeFloat(cursor.getString(column), 0f)) * 3.6;
+    }
+
+    private int computeCalories() {
+        int tier = _calorieTier();
+        if (tier == EnergyModel.TIER_NONE) {
+            return 0;
+        }
+        String selectQuery = "SELECT loca_time, loca_hr, loca_speed FROM "
+                + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
+        Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
+        try {
+            List<Long> times = new ArrayList<>();
+            List<Integer> heartRates = new ArrayList<>();
+            List<Double> speedsKmh = new ArrayList<>();
+            while (cursor.moveToNext()) {
+                if (cursor.isNull(0)) {
+                    continue;
+                }
+                long time;
+                try {
+                    time = Long.parseLong(cursor.getString(0));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                times.add(time);
+                heartRates.add(cursor.isNull(1) ? -1 : safeInt(cursor.getString(1), -1));
+                speedsKmh.add(speedKmh(cursor, 2));
+            }
+            if (times.size() < 2) {
+                return 0;
+            }
+            return EnergyModel.totalCalories(tier, _riderProfile,
+                    toLongArray(times), toIntArray(heartRates), toDoubleArray(speedsKmh));
+        } finally {
+            cursor.close();
+        }
+    }
+
+    private static long[] toLongArray(List<Long> values) {
+        long[] out = new long[values.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = values.get(i);
+        }
+        return out;
+    }
+
+    private static int[] toIntArray(List<Integer> values) {
+        int[] out = new int[values.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = values.get(i);
+        }
+        return out;
+    }
+
+    private static double[] toDoubleArray(List<Double> values) {
+        double[] out = new double[values.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = values.get(i);
+        }
+        return out;
+    }
+
+    private static int safeInt(String value, int fallback) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static float safeFloat(String value, float fallback) {
+        try {
+            return Float.parseFloat(value.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
     public int onLocationChanged(Location location, int heartRate, int cadence, int power) {
@@ -856,6 +990,7 @@ public class AdvancedLocation {
                 AdvancedLocationDbHelper.Location.TABLE_NAME,
                 null,
                 values);
+        _caloriesDirty = true;
     };
 
     /**
@@ -937,12 +1072,14 @@ public class AdvancedLocation {
             if (getMaxSpeed() > 0) {
                 tcx.append("    <MaximumSpeed>"+getMaxSpeed()+"</MaximumSpeed>\n");
             }
-            // no calorie model in the app; Calories is required and unsignedShort, so 0 is the honest value
-            tcx.append("    <Calories>0</Calories>\n");
+            // 0 when no rider profile is set or it is too incomplete to estimate from; the element
+            // is required by the schema and typed xsd:unsignedShort, hence the clamp.
+            tcx.append("    <Calories>"+Math.min(getCalories(), EnergyModel.MAX_CALORIES)+"</Calories>\n");
             tcx.append("    <Intensity>Active</Intensity>\n");
             tcx.append("    <TriggerMethod>Manual</TriggerMethod>\n");
             tcx.append("<Track>\n");
             long prevTime = -1;
+            int cumulativeCalories = 0;
 
             do {
                 time = "";
@@ -971,14 +1108,30 @@ public class AdvancedLocation {
                     //CAD
                     tcx.append("    <Cadence>"+cursor.getString(11)+"</Cadence>\n");
                 }
-                if (!cursor.isNull(12) || !cursor.isNull(13)) {
+                // A Trackpoint may carry a single <Extensions>, so speed, power and the running
+                // calorie total all have to share one <ns3:TPX> block. Accumulate before emitting
+                // so each point carries the total up to and including that point.
+                long rowTime = Long.parseLong(cursor.getString(1));
+                cumulativeCalories += EnergyModel.intervalCalories(_calorieTier(), _riderProfile,
+                        prevTime, rowTime,
+                        cursor.isNull(10) ? -1 : safeInt(cursor.getString(10), -1),
+                        speedKmh(cursor, 13));
+                cumulativeCalories = Math.min(cumulativeCalories, EnergyModel.MAX_CALORIES);
+                prevTime = rowTime;
+                boolean hasSpeed = !cursor.isNull(13);
+                boolean hasPower = !cursor.isNull(12);
+                boolean hasCalories = _riderProfile != null && cumulativeCalories > 0;
+                if (hasSpeed || hasPower || hasCalories) {
                     tcx.append("    <Extensions>\n      <ns3:TPX>\n");
-                    if (!cursor.isNull(13)) {
+                    if (hasSpeed) {
                         tcx.append("        <ns3:Speed>"+cursor.getString(13)+"</ns3:Speed>\n");
                     }
-                    if (!cursor.isNull(12)) {
+                    if (hasPower) {
                         //POWER
                         tcx.append("        <ns3:Watts>"+cursor.getString(12)+"</ns3:Watts>\n");
+                    }
+                    if (hasCalories) {
+                        tcx.append("        <ns3:Calories>"+cumulativeCalories+"</ns3:Calories>\n");
                     }
                     tcx.append("      </ns3:TPX>\n    </Extensions>\n");
                 }
@@ -1013,7 +1166,7 @@ public class AdvancedLocation {
                 + "<gpx xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:gpxtpx=\"http://www.garmin.com/xmlschemas/TrackPointExtension/v1\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" creator=\"" + creator + "\" version=\"1.1\" xsi:schemaLocation=\"http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd  http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd\" xmlns:pb10=\"http://www.pebblebike.com/GPX/1/0/\">\n");
 
 
-        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
+        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
         Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
         long itemId = -1;
@@ -1025,6 +1178,7 @@ public class AdvancedLocation {
                     + "<trkseg>\n");
 
             long prevTime = -1;
+            int cumulativeCalories = 0;
 
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
             do {
@@ -1047,6 +1201,7 @@ public class AdvancedLocation {
                 Date netDate = (new Date(Long.parseLong(cursor.getString(1))));
                 time = sdf.format(netDate);
                 time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
+                long rowTime = Long.parseLong(cursor.getString(1));
 
                 boolean hasLatLon = !cursor.isNull(2) && !cursor.isNull(3);
                 if (hasLatLon) {
@@ -1079,6 +1234,18 @@ public class AdvancedLocation {
                         if (!cursor.isNull(12)) {
                             gpx.append("    <pb10:power>" + cursor.getString(12) + "</pb10:power>\n");
                         }
+                        // GPX has no standard per-point calorie element, so the running total goes
+                        // out in the app's own namespace alongside the other extended fields.
+                        cumulativeCalories += EnergyModel.intervalCalories(_calorieTier(),
+                                _riderProfile, prevTime, rowTime,
+                                cursor.isNull(10) ? -1 : safeInt(cursor.getString(10), -1),
+                                speedKmh(cursor, 13));
+                        cumulativeCalories = Math.min(cumulativeCalories,
+                                EnergyModel.MAX_CALORIES);
+                        if (cumulativeCalories > 0) {
+                            gpx.append("    <pb10:calories>" + cumulativeCalories
+                                    + "</pb10:calories>\n");
+                        }
                     }
                     if (!cursor.isNull(10) || !cursor.isNull(11) || !cursor.isNull(12)) {
                         gpx.append("    <gpxtpx:TrackPointExtension>\n");
@@ -1096,7 +1263,7 @@ public class AdvancedLocation {
                     gpx.append("  </extensions>\n");
                 }
                 gpx.append("</trkpt>\n");
-                prevTime = Long.parseLong(cursor.getString(1));
+                prevTime = rowTime;
             } while (cursor.moveToNext());
             gpx.append("</trkseg>\n"
                     + "</trk>\n");
