@@ -108,6 +108,10 @@ public class AdvancedLocation {
 
     private static final float MAX_ACCURACY_FOR_MAX_SPEED = 12; // in m
 
+    // index of the loca_lap column in the cursor of each export
+    private static final int TCX_LAP_COLUMN = 15;
+    private static final int GPX_LAP_COLUMN = 14;
+
     // min speed to compute _elapsedTime or _ascent
     // 0.3m/s <=> 1.08km/h
     static final float _minSpeedToComputeStats = 0.3f; // in m/s
@@ -126,6 +130,27 @@ public class AdvancedLocation {
     protected float _ascentRate = 0; // in m/s
 
     protected float _slope = 0; // in %
+
+    // Lap state. The first lap is the ride itself: the lap accumulators run from the first fix
+    // and newLap() closes them, so there is no "lap not started yet" state to special-case.
+    protected int _lapCount = 0; // completed laps
+    protected float _lapDistance = 0; // in m, current lap
+    protected long _lapElapsedTime = 0; // in ms, current lap moving time
+    protected long _lapTotalElapsedTime = 0; // in ms, current lap wall clock
+    protected double _lapAscent = 0; // in m, current lap
+    protected float _lapMaxSpeed = 0; // in m/s, current lap
+    protected long _lapStartTime = 0; // in ms, epoch of the current lap start
+    protected long _lastLapElapsedTime = 0; // in ms, last completed lap moving time
+    protected float _lastLapDistance = 0; // in m, last completed lap
+    protected long _bestLapElapsedTime = 0; // in ms, fastest completed lap, 0 when none yet
+
+    // Average power is time weighted, so it needs the same running sums the app has to
+    // reconstruct it: watts x ms, and the ms it was accumulated over. Accumulated over moving
+    // time only, so it stays consistent with the moving-time average speed.
+    protected double _lapPowerSum = 0; // in W.ms
+    protected long _lapPowerElapsedTime = 0; // in ms
+    protected double _totalPowerSum = 0; // in W.ms
+    protected long _totalPowerElapsedTime = 0; // in ms
 
     protected int _nbAscent = 0;
     private double _nbAscentAltitudeLocalMin = 0;
@@ -295,6 +320,170 @@ public class AdvancedLocation {
 
     public int getTotalTimeSeconds() {
         return (int) (_totalElapsedTime / 1000);
+    }
+
+    // lap getters
+    /** Number of completed laps; the lap in progress is {@code getLapCount() + 1}. */
+    public int getLapCount() {
+        return _lapCount;
+    }
+
+    /** Distance of the lap in progress, in m. */
+    public float getLapDistance() {
+        return _lapDistance;
+    }
+
+    /** Moving time of the lap in progress, in ms. */
+    public long getLapElapsedTime() {
+        return _lapElapsedTime;
+    }
+
+    /** Wall clock time of the lap in progress, in ms: this is the number a lap timer shows. */
+    public long getLapTotalElapsedTime() {
+        return _lapTotalElapsedTime;
+    }
+
+    public double getLapAscent() {
+        return Math.floor(_lapAscent);
+    }
+
+    public float getLapMaxSpeed() {
+        return _lapMaxSpeed;
+    }
+
+    /** Average speed of the lap in progress, in m/s, over its moving time. */
+    public float getLapAverageSpeed() {
+        if (_lapElapsedTime > 0) {
+            return (float) _lapDistance / ((float) _lapElapsedTime / 1000f);
+        }
+        return 0;
+    }
+
+    /** Epoch of the current lap start, in ms, 0 before the first fix. */
+    public long getLapStartTime() {
+        return _lapStartTime;
+    }
+
+    /** Moving time of the last completed lap, in ms. */
+    public long getLastLapElapsedTime() {
+        return _lastLapElapsedTime;
+    }
+
+    public float getLastLapDistance() {
+        return _lastLapDistance;
+    }
+
+    /** Moving time of the fastest completed lap, in ms, 0 when no lap is complete yet. */
+    public long getBestLapElapsedTime() {
+        return _bestLapElapsedTime;
+    }
+
+    /**
+     * Time weighted average power of the lap in progress, in W, 0 when no power data has been
+     * received for it.
+     */
+    public int getLapAveragePower() {
+        if (_lapPowerElapsedTime > 0) {
+            return (int) Math.round(_lapPowerSum / _lapPowerElapsedTime);
+        }
+        return 0;
+    }
+
+    /**
+     * Time weighted average power of the whole ride, in W, 0 when no power data has been received.
+     */
+    public int getAveragePower() {
+        if (_totalPowerElapsedTime > 0) {
+            return (int) Math.round(_totalPowerSum / _totalPowerElapsedTime);
+        }
+        return 0;
+    }
+
+    /**
+     * Closes the lap in progress and starts a new one. The first lap is the ride itself, so this
+     * is only ever called while a ride is in progress.
+     *
+     * <p>A zero length lap (a double press on the lap button) is still counted, but never becomes
+     * the best lap: comparing against a 0 ms split would make every later lap look slow.
+     */
+    public void newLap() {
+        Logger("newLap, closing lap " + (_lapCount + 1) + ": " + _lapElapsedTime + "ms "
+                + _lapDistance + "m", LoggerType.TOAST);
+
+        _lastLapElapsedTime = _lapElapsedTime;
+        _lastLapDistance = _lapDistance;
+        if (_lapElapsedTime > 0 && (_bestLapElapsedTime == 0 || _lapElapsedTime < _bestLapElapsedTime)) {
+            _bestLapElapsedTime = _lapElapsedTime;
+        }
+
+        _lapCount++;
+        _lapDistance = 0;
+        _lapElapsedTime = 0;
+        _lapTotalElapsedTime = 0;
+        _lapAscent = 0;
+        _lapMaxSpeed = 0;
+        _lapPowerSum = 0;
+        _lapPowerElapsedTime = 0;
+        _lapStartTime = getTime() > 0 ? getTime() : System.currentTimeMillis();
+    }
+
+    /**
+     * Immutable snapshot of the lap state, so a caller can persist it and hand it back to
+     * {@link #setLapState(LapState)} to resume a ride across a pause.
+     */
+    public static class LapState {
+        public final int lapCount;
+        public final float lapDistance;
+        public final long lapElapsedTime;
+        public final long lapTotalElapsedTime;
+        public final double lapAscent;
+        public final float lapMaxSpeed;
+        public final long lapStartTime;
+        public final long lastLapElapsedTime;
+        public final float lastLapDistance;
+        public final long bestLapElapsedTime;
+
+        public LapState(int lapCount, float lapDistance, long lapElapsedTime,
+                        long lapTotalElapsedTime, double lapAscent, float lapMaxSpeed,
+                        long lapStartTime, long lastLapElapsedTime, float lastLapDistance,
+                        long bestLapElapsedTime) {
+            this.lapCount = lapCount;
+            this.lapDistance = lapDistance;
+            this.lapElapsedTime = lapElapsedTime;
+            this.lapTotalElapsedTime = lapTotalElapsedTime;
+            this.lapAscent = lapAscent;
+            this.lapMaxSpeed = lapMaxSpeed;
+            this.lapStartTime = lapStartTime;
+            this.lastLapElapsedTime = lastLapElapsedTime;
+            this.lastLapDistance = lastLapDistance;
+            this.bestLapElapsedTime = bestLapElapsedTime;
+        }
+    }
+
+    public LapState getLapState() {
+        return new LapState(_lapCount, _lapDistance, _lapElapsedTime, _lapTotalElapsedTime,
+                _lapAscent, _lapMaxSpeed, _lapStartTime, _lastLapElapsedTime, _lastLapDistance,
+                _bestLapElapsedTime);
+    }
+
+    /**
+     * Restores a snapshot taken by {@link #getLapState()}. The power running sums are not part of
+     * the snapshot: they are rebuilt as power data arrives again.
+     */
+    public void setLapState(LapState state) {
+        if (state == null) {
+            return;
+        }
+        _lapCount = state.lapCount;
+        _lapDistance = state.lapDistance;
+        _lapElapsedTime = state.lapElapsedTime;
+        _lapTotalElapsedTime = state.lapTotalElapsedTime;
+        _lapAscent = state.lapAscent;
+        _lapMaxSpeed = state.lapMaxSpeed;
+        _lapStartTime = state.lapStartTime;
+        _lastLapElapsedTime = state.lastLapElapsedTime;
+        _lastLapDistance = state.lastLapDistance;
+        _bestLapElapsedTime = state.bestLapElapsedTime;
     }
 
     public long getTime() {
@@ -646,6 +835,7 @@ public class AdvancedLocation {
         }
         if (location.getAccuracy() < MAX_ACCURACY_FOR_MAX_SPEED) {
             _maxSpeed = Math.max(location.getSpeed(), _maxSpeed);
+            _lapMaxSpeed = Math.max(location.getSpeed(), _lapMaxSpeed);
         }
         _hearRate = heartRate;
         _cadence = cadence;
@@ -716,6 +906,18 @@ public class AdvancedLocation {
                 _elapsedTime += deltaTime;
                 _averageSpeed = _elapsedTime > 0 ? ((float) _distance / ((float) _elapsedTime / 1000f)) : 0;
 
+                _lapElapsedTime += deltaTime;
+                // Time weighted power, accumulated over the same moving window as the lap's
+                // elapsed time so the average speed and the average power share a denominator.
+                _lapPowerSum += power * (double) deltaTime;
+                _lapPowerElapsedTime += deltaTime;
+                _totalPowerSum += power * (double) deltaTime;
+                _totalPowerElapsedTime += deltaTime;
+
+                if (_lapStartTime == 0) {
+                    _lapStartTime = currentLocation.getTime();
+                }
+
                 if (lastGoodAscentLocation == null) {
                     lastGoodAscentLocation = currentLocation;
                     lastGoodAscentLocation2 = currentLocation;
@@ -759,6 +961,7 @@ public class AdvancedLocation {
 
                     if (deltaAscent > 0) {
                         _ascent += deltaAscent;
+                        _lapAscent += deltaAscent;
                     } else {
                         lastGoodAscentLocation2 = currentLocation;
                         Logger("descent, reset lastGoodAscentLocation2", 2);
@@ -846,6 +1049,8 @@ public class AdvancedLocation {
 
             _totalElapsedTime += deltaTime;
             _distance += deltaDistance;
+            _lapTotalElapsedTime += deltaTime;
+            _lapDistance += deltaDistance;
             lastGoodLocation = currentLocation;
 
         } // if (currentLocation.getAccuracy() <= _minAccuracy) {
@@ -984,6 +1189,7 @@ public class AdvancedLocation {
         }
         values.put("loca_speed", this.getSpeed());
         values.put("loca_distance", this.getDistance());
+        values.put("loca_lap", _lapCount);
         //values.put("loca_comment", "");
 
         long newRowId = getWritableDatabase().insert(
@@ -1026,6 +1232,18 @@ public class AdvancedLocation {
         _cadence = cadence;
         _power = power;
         _maxPower = Math.max(power, _maxPower);
+
+        _lapElapsedTime += delta;
+        _lapTotalElapsedTime += delta;
+        _lapDistance += speed * (delta / 1000f);
+        _lapMaxSpeed = Math.max(speed, _lapMaxSpeed);
+        _lapPowerSum += power * (double) delta;
+        _lapPowerElapsedTime += delta;
+        _totalPowerSum += power * (double) delta;
+        _totalPowerElapsedTime += delta;
+        if (_lapStartTime == 0) {
+            _lapStartTime = nowMs;
+        }
     }
 
     public void saveCurrentLocationAtInterval(long timeMs) {
@@ -1053,91 +1271,108 @@ public class AdvancedLocation {
             + "xmlns=\"http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2\" "
             + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:ns4=\"http://www.garmin.com/xmlschemas/ProfileExtension/v1\">\n");
 
-        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed, loca_distance FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
+        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed, loca_distance, loca_lap FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
         Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
-        long itemId = -1;
-        int trackNumber = 1;
         try {
         if (cursor.moveToFirst()) {
-            String time = "";
-            Date netDate = (new Date(Long.parseLong(cursor.getString(1))));
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
-            time = sdf.format(netDate);
-            time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
-            tcx.append("<Activities>\n<Activity Sport=\""+sportType+"\">\n<Id>"+time+"</Id>\n");
-            tcx.append("<Lap StartTime=\""+time+"\">\n");
-            tcx.append("    <TotalTimeSeconds>"+(getElapsedTime()/1000.0)+"</TotalTimeSeconds>\n");
-            tcx.append("    <DistanceMeters>"+getDistance()+"</DistanceMeters>\n");
-            if (getMaxSpeed() > 0) {
-                tcx.append("    <MaximumSpeed>"+getMaxSpeed()+"</MaximumSpeed>\n");
-            }
-            // 0 when no rider profile is set or it is too incomplete to estimate from; the element
-            // is required by the schema and typed xsd:unsignedShort, hence the clamp.
-            tcx.append("    <Calories>"+Math.min(getCalories(), EnergyModel.MAX_CALORIES)+"</Calories>\n");
-            tcx.append("    <Intensity>Active</Intensity>\n");
-            tcx.append("    <TriggerMethod>Manual</TriggerMethod>\n");
-            tcx.append("<Track>\n");
+            tcx.append("<Activities>\n<Activity Sport=\""+sportType+"\">\n<Id>"+tcxTime(sdf, Long.parseLong(cursor.getString(1)))+"</Id>\n");
+
+            // One <Lap> per lap, each holding its own <Track>. The trackpoints are buffered per lap
+            // because the Lap header has to carry totals that are only known once the lap is over,
+            // while the schema requires them before the <Track> element.
+            int currentLap = lapIndex(cursor, TCX_LAP_COLUMN);
+            long lapStartTime = Long.parseLong(cursor.getString(1));
+            long lastRowTime = lapStartTime;
+            float distanceBeforeLap = 0; // ride distance when the previous lap ended
+            float lapDistance = 0;       // ride distance at the last trackpoint of this lap
+            float lapMaxSpeed = 0;
+            int lapCalories = 0;
             long prevTime = -1;
-            int cumulativeCalories = 0;
+            StringBuilder lapTrack = new StringBuilder();
 
             do {
-                time = "";
-                netDate = (new Date(Long.parseLong(cursor.getString(1))));
-                time = sdf.format(netDate);
-                time = time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
-                tcx.append("  <Trackpoint>\n    <Time>"+time+"</Time>\n    ");
+                long rowTime = Long.parseLong(cursor.getString(1));
+                if (!cursor.isNull(14)) {
+                    lapDistance = safeFloat(cursor.getString(14), lapDistance);
+                }
+                if (!cursor.isNull(13)) {
+                    lapMaxSpeed = Math.max(lapMaxSpeed, Math.abs(safeFloat(cursor.getString(13), 0f)));
+                }
+
+                int rowLap = lapIndex(cursor, TCX_LAP_COLUMN);
+                if (rowLap != currentLap) {
+                    // The lap runs up to the first trackpoint of the next one, so consecutive
+                    // laps neither overlap nor leave a gap in the exported timeline.
+                    tcx.append(lapXml(sdf, lapStartTime, rowTime, lapDistance - distanceBeforeLap,
+                            lapMaxSpeed, lapCalories, lapTrack));
+                    lapTrack = new StringBuilder();
+                    distanceBeforeLap = lapDistance;
+                    currentLap = rowLap;
+                    lapStartTime = rowTime;
+                    lapMaxSpeed = 0;
+                    lapCalories = 0;
+                    prevTime = -1;
+                }
+                lastRowTime = rowTime;
+
+                String time = tcxTime(sdf, rowTime);
+                lapTrack.append("  <Trackpoint>\n    <Time>"+time+"</Time>\n    ");
                 if (!cursor.isNull(2) && !cursor.isNull(3)) {
-                    tcx.append("<Position>\n      <LatitudeDegrees>"+cursor.getString(2)+"</LatitudeDegrees>\n      ");
-                    tcx.append("<LongitudeDegrees>"+cursor.getString(3)+"</LongitudeDegrees>\n    </Position>\n");
+                    lapTrack.append("<Position>\n      <LatitudeDegrees>"+cursor.getString(2)+"</LatitudeDegrees>\n      ");
+                    lapTrack.append("<LongitudeDegrees>"+cursor.getString(3)+"</LongitudeDegrees>\n    </Position>\n");
                 }
                 if (!cursor.isNull(4)) {
                     //Altitude; NULL indoors
-                    tcx.append("    <AltitudeMeters>"+cursor.getString(4)+"</AltitudeMeters>\n");
+                    lapTrack.append("    <AltitudeMeters>"+cursor.getString(4)+"</AltitudeMeters>\n");
                 }
                 if (!cursor.isNull(14)) {
                     //NULL on rows recorded before the v4 migration added the column
-                    tcx.append("    <DistanceMeters>"+cursor.getString(14)+"</DistanceMeters>\n");
+                    lapTrack.append("    <DistanceMeters>"+cursor.getString(14)+"</DistanceMeters>\n");
                 }
 
                 if (!cursor.isNull(10)) {
                     //HR
-                    tcx.append("    <HeartRateBpm><Value>"+cursor.getString(10)+"</Value></HeartRateBpm>\n");
+                    lapTrack.append("    <HeartRateBpm><Value>"+cursor.getString(10)+"</Value></HeartRateBpm>\n");
                 }
                 if (!cursor.isNull(11)) {
                     //CAD
-                    tcx.append("    <Cadence>"+cursor.getString(11)+"</Cadence>\n");
+                    lapTrack.append("    <Cadence>"+cursor.getString(11)+"</Cadence>\n");
                 }
                 // A Trackpoint may carry a single <Extensions>, so speed, power and the running
                 // calorie total all have to share one <ns3:TPX> block. Accumulate before emitting
-                // so each point carries the total up to and including that point.
-                long rowTime = Long.parseLong(cursor.getString(1));
-                cumulativeCalories += EnergyModel.intervalCalories(_calorieTier(), _riderProfile,
+                // so each point carries the total up to and including that point. Calories are
+                // per lap, matching the per lap <Calories> element of the Lap header.
+                lapCalories += EnergyModel.intervalCalories(_calorieTier(), _riderProfile,
                         prevTime, rowTime,
                         cursor.isNull(10) ? -1 : safeInt(cursor.getString(10), -1),
                         speedKmh(cursor, 13));
-                cumulativeCalories = Math.min(cumulativeCalories, EnergyModel.MAX_CALORIES);
+                lapCalories = Math.min(lapCalories, EnergyModel.MAX_CALORIES);
                 prevTime = rowTime;
                 boolean hasSpeed = !cursor.isNull(13);
                 boolean hasPower = !cursor.isNull(12);
-                boolean hasCalories = _riderProfile != null && cumulativeCalories > 0;
+                boolean hasCalories = _riderProfile != null && lapCalories > 0;
                 if (hasSpeed || hasPower || hasCalories) {
-                    tcx.append("    <Extensions>\n      <ns3:TPX>\n");
+                    lapTrack.append("    <Extensions>\n      <ns3:TPX>\n");
                     if (hasSpeed) {
-                        tcx.append("        <ns3:Speed>"+cursor.getString(13)+"</ns3:Speed>\n");
+                        lapTrack.append("        <ns3:Speed>"+cursor.getString(13)+"</ns3:Speed>\n");
                     }
                     if (hasPower) {
                         //POWER
-                        tcx.append("        <ns3:Watts>"+cursor.getString(12)+"</ns3:Watts>\n");
+                        lapTrack.append("        <ns3:Watts>"+cursor.getString(12)+"</ns3:Watts>\n");
                     }
                     if (hasCalories) {
-                        tcx.append("        <ns3:Calories>"+cumulativeCalories+"</ns3:Calories>\n");
+                        lapTrack.append("        <ns3:Calories>"+lapCalories+"</ns3:Calories>\n");
                     }
-                    tcx.append("      </ns3:TPX>\n    </Extensions>\n");
+                    lapTrack.append("      </ns3:TPX>\n    </Extensions>\n");
                 }
-                tcx.append("  </Trackpoint>\n");
+                lapTrack.append("  </Trackpoint>\n");
             } while (cursor.moveToNext());
-            tcx.append("</Track>\n</Lap>\n</Activity>\n</Activities>\n");
+
+            tcx.append(lapXml(sdf, lapStartTime, lastRowTime, lapDistance - distanceBeforeLap,
+                    lapMaxSpeed, lapCalories, lapTrack));
+            tcx.append("</Activity>\n</Activities>\n");
         }
         } finally {
             cursor.close();
@@ -1148,6 +1383,35 @@ public class AdvancedLocation {
         } finally {
             readLock.unlock();
         }
+    }
+
+    /** Lap index of the current row, 0 when NULL, which is the case for rows written before v5. */
+    private static int lapIndex(Cursor cursor, int column) {
+        return cursor.isNull(column) ? 0 : safeInt(cursor.getString(column), 0);
+    }
+
+    private static String tcxTime(SimpleDateFormat sdf, long timeMs) {
+        String time = sdf.format(new Date(timeMs));
+        return time.substring(0, time.length() - 2) + ':' + time.substring(time.length() - 2);
+    }
+
+    /** A complete TCX {@code <Lap>} element, with the already buffered {@code <Track>} appended. */
+    private static String lapXml(SimpleDateFormat sdf, long startTime, long endTime,
+                                 float distance, float maxSpeed, int calories, StringBuilder track) {
+        StringBuilder lap = new StringBuilder();
+        lap.append("<Lap StartTime=\"").append(tcxTime(sdf, startTime)).append("\">\n");
+        lap.append("    <TotalTimeSeconds>").append(Math.max(0, endTime - startTime) / 1000.0).append("</TotalTimeSeconds>\n");
+        lap.append("    <DistanceMeters>").append(distance).append("</DistanceMeters>\n");
+        if (maxSpeed > 0) {
+            lap.append("    <MaximumSpeed>").append(maxSpeed).append("</MaximumSpeed>\n");
+        }
+        // 0 when no rider profile is set or it is too incomplete to estimate from; the element
+        // is required by the schema and typed xsd:unsignedShort, hence the clamp.
+        lap.append("    <Calories>").append(Math.min(calories, EnergyModel.MAX_CALORIES)).append("</Calories>\n");
+        lap.append("    <Intensity>Active</Intensity>\n");
+        lap.append("    <TriggerMethod>Manual</TriggerMethod>\n");
+        lap.append("<Track>\n").append(track).append("</Track>\n</Lap>\n");
+        return lap.toString();
     }
 
     public String getGPX(boolean extended) {
@@ -1166,10 +1430,9 @@ public class AdvancedLocation {
                 + "<gpx xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:gpxtpx=\"http://www.garmin.com/xmlschemas/TrackPointExtension/v1\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" creator=\"" + creator + "\" version=\"1.1\" xsi:schemaLocation=\"http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd  http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd\" xmlns:pb10=\"http://www.pebblebike.com/GPX/1/0/\">\n");
 
 
-        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
+        String selectQuery = "SELECT _ID, loca_time, loca_lat, loca_lon, loca_altitude, loca_accuracy, loca_comment, loca_ascent, loca_gps_altitude, loca_pressure_altitude, loca_hr, loca_cad, loca_power, loca_speed, loca_lap FROM " + AdvancedLocationDbHelper.Location.TABLE_NAME + " ORDER BY _ID ASC";
         Cursor cursor = getReadableDatabase().rawQuery(selectQuery, null);
 
-        long itemId = -1;
         int trackNumber = 1;
         try {
         if (cursor.moveToFirst()) {
@@ -1179,6 +1442,9 @@ public class AdvancedLocation {
 
             long prevTime = -1;
             int cumulativeCalories = 0;
+            // A lap becomes a track segment: GPX has no lap concept, but a segment per lap is the
+            // closest equivalent and is what consumers use to split a ride.
+            int currentLap = lapIndex(cursor, GPX_LAP_COLUMN);
 
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
             do {
@@ -1192,10 +1458,20 @@ public class AdvancedLocation {
                     trackNumber++;
                     // more than 12 hours since last point? create new track
                     gpx.append("</trkseg>\n</trk>\n<trk>\n<name>Track #" + trackNumber + "</name>\n<trkseg>\n");
+                    cumulativeCalories = 0;
 
                 } else if (prevTime > 0 && Long.parseLong(cursor.getString(1)) - prevTime > 2 * 3600 * 1000) {
                     // more than 2 hours since last point? create new segment
                     gpx.append("</trkseg>\n<trkseg>\n");
+                    cumulativeCalories = 0;
+                }
+
+                int rowLap = lapIndex(cursor, GPX_LAP_COLUMN);
+                if (rowLap != currentLap) {
+                    // new lap: new segment, and the calorie running total restarts with it
+                    gpx.append("</trkseg>\n<trkseg>\n");
+                    currentLap = rowLap;
+                    cumulativeCalories = 0;
                 }
 
                 Date netDate = (new Date(Long.parseLong(cursor.getString(1))));
@@ -1236,6 +1512,7 @@ public class AdvancedLocation {
                         }
                         // GPX has no standard per-point calorie element, so the running total goes
                         // out in the app's own namespace alongside the other extended fields.
+                        // The total runs within the current segment, so it restarts on every lap.
                         cumulativeCalories += EnergyModel.intervalCalories(_calorieTier(),
                                 _riderProfile, prevTime, rowTime,
                                 cursor.isNull(10) ? -1 : safeInt(cursor.getString(10), -1),

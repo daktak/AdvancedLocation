@@ -10,7 +10,7 @@ public class AdvancedLocationDbHelper extends SQLiteOpenHelper {
 
     private static final String TAG = "PB-AdvLocDbHelper";
 
-    public static final int DATABASE_VERSION = 4;
+    public static final int DATABASE_VERSION = 5;
     public static final String DATABASE_NAME = "AdvancedLocation.db";
 
     private static AdvancedLocationDbHelper sInstance;
@@ -37,6 +37,7 @@ public class AdvancedLocationDbHelper extends SQLiteOpenHelper {
                     + ", loca_power" + TEXT_TYPE
                     + ", loca_speed" + TEXT_TYPE
                     + ", loca_distance" + TEXT_TYPE
+                    + ", loca_lap" + TEXT_TYPE
             + " )";
 
     private static final String SQL_DELETE_ENTRIES =
@@ -80,6 +81,11 @@ public class AdvancedLocationDbHelper extends SQLiteOpenHelper {
                 SQLExec(db, "ALTER TABLE location ADD COLUMN loca_power TEXT");
                 SQLExec(db, "ALTER TABLE location ADD COLUMN loca_speed TEXT");
                 SQLExec(db, "ALTER TABLE location ADD COLUMN loca_distance TEXT");
+            }
+            if (oldVersion < 5) {
+                // lap index, 0 based: rows recorded before this migration are NULL and are
+                // treated as lap 0 when reading
+                SQLExec(db, "ALTER TABLE location ADD COLUMN loca_lap TEXT");
             }
         }
     }
